@@ -15,7 +15,10 @@ public class NaiveBayes {
         }
 
         model = new MultinomialModel();
-        model.initTerms(args[0]);
+        model.initVocab(args[0]);
         model.initLabels(args[1]);
+        model.initTrainingData(args[2], args[3]);
+        model.train();
+        model.test(args[4], args[5]);
     }
 }
