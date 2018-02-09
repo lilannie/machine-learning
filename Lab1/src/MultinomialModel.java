@@ -9,8 +9,8 @@ import java.util.Scanner;
 class MultinomialModel {
     private HashMap<Integer, String> words = null;
     private HashMap<Integer, String> labels = null;
-    private HashMap<Integer, HashSet<Integer>> label_docs = null;
-    private HashMap<Integer, HashMap<Integer, Integer>> doc_word_count = null;
+    private HashMap<Integer, HashSet<Integer>> label_docs = null; // ( key = labelId, val = [ docIds ]
+    private HashMap<Integer, HashMap<Integer, Integer>> doc_word_count = null; // ( key = docId, < key = wordId, val = count> )
 
     private int num_docs = 0;
 
@@ -95,7 +95,7 @@ class MultinomialModel {
         calculateEstimates();
     }
 
-    void test(String test_label_file_name, String test_data_file_name) {
+    void test(String test_label_file_name, String test_data_file_name, boolean useMLE) {
         File label_file = new File(test_label_file_name);
         File data_file = new File(test_data_file_name);
 
@@ -107,9 +107,10 @@ class MultinomialModel {
             int total_correct = 0;
             HashMap<Integer, Integer> group_total = new HashMap<>();
             HashMap<Integer, Integer> group_correct = new HashMap<>();
+            int[][] confusionMatrix = new int[label_docs.size() + 1][label_docs.size() + 1];
 
             int curr_doc = 1;   // ASSUME the first document id is 1
-            double[] estimates = new double[labels.size() + 1];    // size + 1 because ids start at 1
+            double[] estimates = new double[label_docs.size() + 1];    // size + 1 because ids start at 1
 
             while (data_scan.hasNext()) {
                 // ASSUME: data = <doc_id, word_id, word_frequency>
@@ -121,12 +122,15 @@ class MultinomialModel {
                 // If we are finished with the prior document, we need to finish determining the predicted label
                 if (doc_id != curr_doc) {
                     // Find the label, w_j, that maximizes the estimate
-                    double max_classification = Double.MIN_VALUE;
-                    int max_label = 0;
+
+                    // Set max equal to the first category
+                    estimates[1] += Math.log(priors[1]);
+                    double max_classification = estimates[1];
+                    int max_label = 1;
 
                     // Multiply P( w_j ) with the running estimate product w_NB
-                    for (int label = 1; label <= labels.size(); label++) {
-                        estimates[label] *= priors[label];
+                    for (int label = 2; label <= label_docs.size(); label++) {
+                        estimates[label] += Math.log(priors[label]);
 
                         if (estimates[label] > max_classification) {
                             max_classification = estimates[label];
@@ -140,20 +144,27 @@ class MultinomialModel {
                         total_correct++;
                         group_correct.put(correct_label, group_correct.getOrDefault(correct_label, 0)+1);
                     }
-
-                    System.out.println(correct_label+" vs. "+max_label);
+                    // If it is incorrect add to the confusion matrix
+                    else {
+                        confusionMatrix[correct_label][max_label] += 1;
+                    }
 
                     total_documents++;
                     group_total.put(correct_label, group_total.getOrDefault(correct_label, 0)+1);
 
                     curr_doc = doc_id;
-                    estimates = new double[labels.size() + 1];  // size + 1 because ids start at 1
+                    estimates = new double[label_docs.size() + 1];  // size + 1 because ids start at 1
                 }
 
                 // Multiply P( x_i | w_j ) with the running estimate product w_NB
-                for (int label = 1; label <= labels.size(); label++) {
+                for (int label = 1; label <= label_docs.size(); label++) {
                     for (int i = 0; i < word_frequency; i++) {
-                        estimates[label] *= baysian_estimate[label][word_id];
+                        if (useMLE) {
+                            estimates[label] += Math.log(max_likelihood_estimate[label][word_id]);
+                        }
+                        else {
+                            estimates[label] += Math.log(baysian_estimate[label][word_id]);
+                        }
                     }
                 }
             }
@@ -161,12 +172,14 @@ class MultinomialModel {
             label_scan.close();
             data_scan.close();
 
-            System.out.println("Test Results using Baysian Estimate");
-            System.out.printf("Overall Accuracy: %.4f \n", ( total_correct + 0.0) / total_documents);
+            System.out.printf("Overall Accuracy: %.4f %% \n", (( total_correct + 0.0) / total_documents ) *100 );
             System.out.println("Class Accuracy:");
             for (int group: group_total.keySet()) {
-                System.out.printf("Group %d: %.4f \n", group, ( group_correct.getOrDefault(group, 0) + 0.0) / group_total.get(group));
+                System.out.printf("Group %d: %.4f %% \n", group, (( group_correct.getOrDefault(group, 0) + 0.0) / group_total.get(group)) *100 );
             }
+
+            final PrettyPrinter p = new PrettyPrinter(System.out);
+            p.print(confusionMatrix);
 
         } catch (FileNotFoundException e) {
             e.printStackTrace();
@@ -199,10 +212,13 @@ class MultinomialModel {
     }
 
     private void calculatePriors() {
-        System.out.println("Calculating class priors for P ( w_j ):");
-        priors = new double[labels.size() + 1];  // size + 1 because ids start at 1
+        System.out.println("-----------------------------------------------------");
+        System.out.println("Class priors for P ( w_j ) where w_j is a newsgroup j:");
+        System.out.println("-----------------------------------------------------");
 
-        for (int label = 1; label <= labels.size(); label++) {
+        priors = new double[label_docs.size() + 1];  // size + 1 because ids start at 1
+
+        for (int label = 1; label <= label_docs.size(); label++) {
             priors[label] = ( label_docs.get(label).size() + 0.0 ) / num_docs;
 
             // Print Prior for each newsgroup
@@ -225,11 +241,11 @@ class MultinomialModel {
      */
     private void calculateEstimates() {
         // size + 1 because ids start at 1
-        max_likelihood_estimate = new double[labels.size() + 1][words.size() + 1];
-        baysian_estimate = new double[labels.size() + 1][words.size() + 1];
+        max_likelihood_estimate = new double[label_docs.size() + 1][words.size() + 1];
+        baysian_estimate = new double[label_docs.size() + 1][words.size() + 1];
 
         // For each label, w_j
-        for (int label = 1; label <= labels.size(); label++) {
+        for (int label = 1; label <= label_docs.size(); label++) {
             // Get all documents in w_j
             HashSet<Integer> docs = label_docs.get(label);
 
@@ -237,24 +253,25 @@ class MultinomialModel {
             int total_words = 0;
             for (int doc : docs) {
                 // Key = word_id, Value = # of occurances in doc
-                total_words += doc_word_count.get(doc).size();
+                HashMap<Integer, Integer> word_count = doc_word_count.get(doc);
+                for (int word: word_count.keySet()) {
+                    total_words += word_count.get(word);
+                }
             }
 
             // for each word, w_k
             for (int word = 1; word <= words.size(); word++) {
 
                 // Calculate n_j - the number of times w_k occurs in all documents in class w_j
-                int total_occurances = 0;
+                int total_occurences = 0;
                 for (int doc : docs) {
-                    total_occurances += doc_word_count.get(doc).getOrDefault(word, 0);
+                    total_occurences += doc_word_count.get(doc).getOrDefault(word, 0);
                 }
 
                 // Set estimate values
-                max_likelihood_estimate[label][word] = (total_occurances + 0.0) / total_words;
-                baysian_estimate[label][word] = (total_occurances + 1.0) / (total_occurances + words.size());
+                max_likelihood_estimate[label][word] = (double) ((total_occurences) / total_words);
+                baysian_estimate[label][word] = (double)  (total_occurences + 1) / (total_words + words.size());
             }
         }
-        System.out.println("Calculated estimates for P ( w_k | w_j )");
-
     }
 }
