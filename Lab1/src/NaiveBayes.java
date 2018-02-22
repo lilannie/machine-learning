@@ -1,3 +1,9 @@
+/**
+ * @author Annie Steenson
+ *
+ * A wrapper class that instantiates a particular model, trains the model and tests the model.
+ *
+ */
 public class NaiveBayes {
     private static MultinomialModel model;
 
